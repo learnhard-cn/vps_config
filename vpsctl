@@ -1,0 +1,221 @@
+#!/bin/bash
+###########################################################3
+# 功能: VPS自动配置
+# 1. 配置基础环境: 包括终端字符集、基本工具vim/git/python3.9+等
+# 2. 配置shell环境: 新建工作目录，增加普通用户(不可以使用密码登录，仅支持RSA密钥访问),sudo免密码,使用 `oh-my-zsh`
+# 3. 防火墙配置: 添加SSH登录限制(非ipset的whitelist中IP段不可以登录)，端口限制(非必要端口禁止访问)，禁止ICMP/UDP消息
+#
+#   适用于: CentOS8+/AlmaLinux/RockyLinux
+###########################################################3
+
+user_name=""   # 设置个人用户名
+user_pass=""   # 登录，设置了也不用
+
+# 登录使用的SSH公钥(一定要添加，否则无法登录成功)
+ssh_pub_key=""
+
+########### 文字显示 ######
+white() {
+    printf "\033[0;37m $@ \033[0m"
+}
+red() {
+    printf "\033[0;31;1m $@ \033[0m"
+}
+green() {
+    printf "\033[0;32;1m $@ \033[0m"
+}
+bgreen() {
+    printf "\033[0;32;7m $@ \033[0m"
+}
+
+
+check() {
+    if [ "`uid -u`" != "0" ] ; then
+        echo "此脚本需要运行在root权限下!请切换到root用户下或者使用sudo运行."
+        exit 0
+    fi
+    echo "用户检测通过!"
+}
+
+# 添加管理员用户
+add_user() {
+    yum install zsh git tar curl wget -y
+    if [ "$user_name" = "" ] ; then
+        read -p "`bgreen 输入用户名称:`" user_name
+        [[ "$user_name" = "" ]] && echo "您没有输入的用户名字!" && exit 1
+    fi
+
+    if [ "$user_pass" = "" ] ; then
+        read -p "`bgreen 输入用户密码:`" user_pass
+        [[ "$user_pass" = "" ]] && echo "您没有输入的用户密码!" && exit 2
+    fi
+
+    useradd $user_name --home-dir /apps -c "manager" -s /usr/bin/zsh -p "$user_pass" -g "users"
+    #修改用户权限,使用sudo不用输入密码
+    read -p "使用sudo命令时是否希望输入密码？(y/n,默认n)" str_answer
+    [[ "$str_answer" = "y" || "$str_answer" = "Y" ]] && echo "您选择了使用sudo时需要 `red 输入密码`(操作更安全)" && return 1
+    echo "一看您跟我一样，就是个偷懒的人!选择使用sudo时`green 不输入密码`."
+    echo "$user_name ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+
+    read -p "是否为 `red $username` 用户设置SSH免密码登录?(y/n,默认n)"
+    [[ "$str_answer" = "n" || "$str_answer" = "N" ]] && echo "您选择了`red 使用密码SSH登录方式`(千万别弄丢了密码!)" && return 1
+    echo "一看您跟我一样，就是个偷懒的人! 您选择使用`green SSH免密码认证登录方式`(再也不用输入密码登录了)."
+
+    read -p "输入您的RSA公钥内容(Linux下 `green ~/.ssh/id_rsa.pub` 文件,一行内容):" str_ssh_pub_key
+    echo "第一步: 为 $user_name 用户下生成默认的 ssh-rsa 密钥对(无特殊用途,为了生成~/.ssh目录,如果已经有，选择不覆盖即可)!"
+    su - $user_name -c 'ssh-keygen -C "vps-use" -f ~/.ssh/id_rsa -b 2048 -t rsa -q -N ""'
+    echo "第二步: 添加刚输入的公钥内容到 `green ~/.ssh/authorized_keys` 文件中:"
+    [[ "$str_ssh_pub_key" != "" && "$str_ssh_pub_key:0:8}" = "ssh-rsa " ]] && su - $user_name -c  "echo '$str_ssh_pub_key' >> ~/.ssh/authorized_keys && chmod 0600 ~/.ssh/authorized_keys"
+    echo "`green 恭喜您` 已经添加公钥成功!"
+}
+
+install_ohmyzsh() {
+    [[ `which curl` ]] || ( echo "没有curl，这就安装一下:" && yum install curl -y )
+    sh -c "$(curl -fsSL https://raw.github.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
+    [[ "$?" = "0" ]]  || (echo "安装ohmyzsh失败了!! 看看报错信息! 稍后重新安装试试!"  && return 1)
+    echo "设置默认主题为: `green agnoster`" && sed -i 's/ZSH_THEME="robbyrussell"/ZSH_THEME="agnoster"/' $HOME/.zshrc
+    echo "设置默认编辑器为 `green vi`:" && echo "set -o vi"  >> $HOME/.zshrc
+    echo "`green 安装ohmyzsh成功!`重新登录一次即可生效!"
+}
+
+install_fwctl() {
+    read -p "输入安装fwctl工具位置(默认目录:/usr/bin):" str_fw_path
+    [[ -d "$str_fw_path" ]] || str_fw_path="/usr/bin"
+    fw_file="$str_fw_path/fwctl"
+    fwctl_url="https://raw.githubusercontent.com/learnhard-cn/vps_config/main/"
+    echo "$fwctl_base64_data" |base64 -d > $fw_file
+    chmod +x $fw_file
+}
+
+update_src() {
+    yum install wget curl -y
+    # 1.备份
+    mv /etc/yum.repos.d/CentOS-Base.repo /etc/yum.repos.d/CentOS-Base.repo.backup
+    # 2.下载新的 CentOS-Base.repo 到 /etc/yum.repos.d/
+    [[ `which wget` ]] && wget -O /etc/yum.repos.d/CentOS-Base.repo https://mirrors.aliyun.com/repo/Centos-8.repo
+    [[ "$?" != "0" ]] && curl -o /etc/yum.repos.d/CentOS-Base.repo https://mirrors.aliyun.com/repo/Centos-8.repo
+
+    # 3. 运行 yum makecache 生成缓存
+    yum makecache
+}
+
+update_epel(){
+    echo "更新EPEL软件源为阿里云源"
+    # 1. 备份(如有配置其他epel源)
+    mv /etc/yum.repos.d/epel.repo /etc/yum.repos.d/epel.repo.backup
+
+    # 2. 下载新repo 到/etc/yum.repos.d/
+    ### 1）安装 epel 配置包
+    yum install -y https://mirrors.aliyun.com/epel/epel-release-latest-8.noarch.rpm
+    ### 2）将 repo 配置中的地址替换为阿里云镜像站地址
+    sed -i 's|^#baseurl=https://download.example/pub|baseurl=https://mirrors.aliyun.com|' /etc/yum.repos.d/epel*
+    sed -i 's|^metalink|#metalink|' /etc/yum.repos.d/epel*
+
+    # 3. 运行 yum makecache 生成缓存
+    yum makecache
+}
+
+install_basic() {
+    echo "`green 安装基础工具...`"
+    yum update
+    yum install -y wget curl net-tools telnet tmux
+}
+
+install_langpack() {
+    echo "中文语言支持"
+    yum install -y glibc-common langpacks-zh_CN.noarch
+    for shprofile in "$HOME/.bashrc" "$HOME/.zshrc"
+    do
+        [[ -f "$shprofile" ]] && echo 'export LC_ALL="zh_CN.UTF-8"' >> ${shprofile}
+    done
+    echo 'export LC_ALL="zh_CN.UTF-8"' >> /etc/locale.conf
+}
+
+install_python3() {
+    echo "安装Python3.9版本"
+    yum install python39 -y
+}
+
+update_timezone(){
+    echo "更新时区为上海地区UTC+0800"
+    ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
+}
+
+config_sysctl() {
+    echo "配置网络:开始..."
+
+    echo "备份sysctl.conf文件"
+    cp /etc/sysctl.conf /etc/sysctl.conf.bak
+
+    echo "下载并添加网络优化配置信息"
+    curl -L https://git.io/JieqE >> /etc/sysctl.conf
+
+    echo "生效配置"
+    sysctl -p
+    
+    echo "配置网络:结束!"
+}
+
+init() {
+    echo "Linux系统初始化安装设置"
+    install_basic
+    add_user
+    install_ohmyzsh
+    install_langpack
+    update_timezone
+    install_fwctl
+    config_sysctl
+}
+
+usage() {
+    cat <<END
+
+ 帮助信息:
+
+    `basename $0` `green add_user`              添加管理员用户
+
+    `basename $0` `green install_ohmyzsh`       安装ohmyzsh环境
+    `basename $0` `green install_langpack`      安装中文语言支持
+    `basename $0` `green intall_python3`        安装python3.9环境
+
+    `basename $0` `green update_src`            更新软件源为阿里云(香港VPS用)
+    `basename $0` `green update_epel`           更新EPEL为阿里云(香港VPS用)
+    `basename $0` `green update_timezone`       更新时区信息为国内时区(方便时间查看)
+
+    `basename $0` `green init`                  一键安装配置(添加用户、安装ohmyzsh、安装中文语言支持、安装python3.9环境、更新国内时区)
+
+    `basename $0` `green install_fwctl`         安装`red fwctl`防火墙配置工具(简化配置白名单规则、开放端口等)
+
+END
+
+
+}
+
+main() {
+    action="$1"
+    case "$action" in
+    init)
+        $action
+    ;;
+    add_user|install_ohmyzsh|install_langpack|install_python3|install_fwctl|config_sysctl)
+        $action
+    ;;
+    update_timezone|update_src|update_epel)
+        $action
+    ;;
+    help|-h)
+        usage
+        exit 0
+    ;;
+    *)
+        echo "参数错误: $action"
+        usage
+        exit 0
+    ;;
+    esac
+}
+
+
+
+# 执行模块 #
+main $@
