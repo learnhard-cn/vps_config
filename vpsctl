@@ -46,11 +46,15 @@ add_user() {
     fi
 
     if [ "$user_pass" = "" ] ; then
+        stty -echo
         read -p "`bgreen 输入用户密码:`" user_pass
-        [[ "$user_pass" = "" ]] && echo "您没有输入的用户密码!" && exit 2
+        read -p "`red 再次输入用户密码`(二次确认):" user_2pass
+        stty echo
+        [[ "$user_pass" = "" || "${user_2pass}" = "" ]] && echo "您没有输入的用户密码!" && exit 2
+        [[ "$user_pass" != "${user_2pass}" ]] && echo "两次输入密码不一致!" && exit 3
     fi
 
-    useradd $user_name --home-dir /apps -c "manager" -s /usr/bin/zsh -p "$user_pass" -g "users"
+    useradd $user_name --home-dir /home/$user_name -c "manager" -s /usr/bin/zsh -p "$user_pass" -g "users"
     #修改用户权限,使用sudo不用输入密码
     read -p "使用sudo命令时是否希望输入密码？(y/n,默认n)" str_answer
     [[ "$str_answer" = "y" || "$str_answer" = "Y" ]] && echo "您选择了使用sudo时需要 `red 输入密码`(操作更安全)" && return 1
