@@ -6,6 +6,10 @@
 # 3. 防火墙配置: 添加SSH登录限制(非ipset的whitelist中IP段不可以登录)，端口限制(非必要端口禁止访问)，禁止ICMP/UDP消息
 #
 #   适用于: CentOS8+/AlmaLinux/RockyLinux
+#   短链接地址: https://git.io/vpsctl
+#   作者: Awkee
+#   博客: https://vlike.work
+#   VPS推荐: 
 ###########################################################3
 
 user_name=""   # 设置个人用户名
@@ -48,6 +52,7 @@ add_user() {
     if [ "$user_pass" = "" ] ; then
         stty -echo
         read -p "`bgreen 输入用户密码:`" user_pass
+        echo
         read -p "`red 再次输入用户密码`(二次确认):" user_2pass
         stty echo
         [[ "$user_pass" = "" || "${user_2pass}" = "" ]] && echo "您没有输入的用户密码!" && exit 2
@@ -57,19 +62,24 @@ add_user() {
     useradd $user_name --home-dir /home/$user_name -c "manager" -s /usr/bin/zsh -p "$user_pass" -g "users"
     #修改用户权限,使用sudo不用输入密码
     read -p "使用sudo命令时是否希望输入密码？(y/n,默认n)" str_answer
-    [[ "$str_answer" = "y" || "$str_answer" = "Y" ]] && echo "您选择了使用sudo时需要 `red 输入密码`(操作更安全)" && return 1
-    echo "一看您跟我一样，就是个偷懒的人!选择使用sudo时`green 不输入密码`."
-    echo "$user_name ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+    if [ "$str_answer" = "y" -o "$str_answer" = "Y" ] ; then
+        echo "您选择了使用sudo时需要 `red 输入密码`(操作更安全)"
+    else
+        echo "一看您跟我一样，就是个偷懒的人!选择使用sudo时`green 不输入密码`."
+        echo "$user_name ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+    fi
 
-    read -p "是否为 `red $username` 用户设置SSH免密码登录?(y/n,默认n)"
+    read -p "是否为 `red $user_name` 用户设置SSH免密码登录?(y/n,默认n)" str_answer
     [[ "$str_answer" = "n" || "$str_answer" = "N" ]] && echo "您选择了`red 使用密码SSH登录方式`(千万别弄丢了密码!)" && return 1
     echo "一看您跟我一样，就是个偷懒的人! 您选择使用`green SSH免密码认证登录方式`(再也不用输入密码登录了)."
 
     read -p "输入您的RSA公钥内容(Linux下 `green ~/.ssh/id_rsa.pub` 文件,一行内容):" str_ssh_pub_key
     echo "第一步: 为 $user_name 用户下生成默认的 ssh-rsa 密钥对(无特殊用途,为了生成~/.ssh目录,如果已经有，选择不覆盖即可)!"
     su - $user_name -c 'ssh-keygen -C "vps-use" -f ~/.ssh/id_rsa -b 2048 -t rsa -q -N ""'
-    echo "第二步: 添加刚输入的公钥内容到 `green ~/.ssh/authorized_keys` 文件中:"
-    [[ "$str_ssh_pub_key" != "" && "$str_ssh_pub_key:0:8}" = "ssh-rsa " ]] && su - $user_name -c  "echo '$str_ssh_pub_key' >> ~/.ssh/authorized_keys && chmod 0600 ~/.ssh/authorized_keys"
+    echo "第二步: 添加刚输入的公钥内容到 `green /home/$user_name/.ssh/authorized_keys` 文件中:"
+    # echo "公钥内容: [$str_ssh_pub_key]"
+    # echo "命令如下:[echo '$str_ssh_pub_key' >> /home/$user_name/.ssh/authorized_keys && chmod 0600 /home/$user_name/.ssh/authorized_keys]"
+    [[ "$str_ssh_pub_key" != "" && "${str_ssh_pub_key:0:7}" = "ssh-rsa" ]] && su - $user_name -c  "echo '$str_ssh_pub_key' >> /home/$user_name/.ssh/authorized_keys && chmod 0600 /home/$user_name/.ssh/authorized_keys"
     echo "`green 恭喜您` 已经添加公钥成功!"
 }
 
@@ -86,7 +96,8 @@ install_fwctl() {
     read -p "输入安装fwctl工具位置(默认目录:/usr/bin):" str_fw_path
     [[ -d "$str_fw_path" ]] || str_fw_path="/usr/bin"
     fw_file="$str_fw_path/fwctl"
-    fwctl_url="https://raw.githubusercontent.com/learnhard-cn/vps_config/main/firewall/fwctl"
+    # fwctl_url="https://raw.githubusercontent.com/learnhard-cn/vps_config/main/firewall/fwctl"
+    fwctl_url="https://git.io/fwctl"
     curl -o $fw_file -L $fwctl_url
     chmod +x $fw_file
     $fw_file help

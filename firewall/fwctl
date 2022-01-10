@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 ################################################
 ### 功能: iptables防火墙管理脚本
-### 作者: https://vlike.work
+### 作者: Awkee
 ### 
+#   链接: https://git.io/fwctl
+#   博客: https://vlike.work
+#
 # IP数据源参考链接:
 #   - 按省市级分类IP段: https://github.com/out0fmemory/qqwry.dat
 #   - 按运营商分类IP段: https://github.com/gaoyifan/china-operator-ip
