@@ -82,9 +82,10 @@ install_fwctl() {
     read -p "输入安装fwctl工具位置(默认目录:/usr/bin):" str_fw_path
     [[ -d "$str_fw_path" ]] || str_fw_path="/usr/bin"
     fw_file="$str_fw_path/fwctl"
-    fwctl_url="https://raw.githubusercontent.com/learnhard-cn/vps_config/main/"
-    echo "$fwctl_base64_data" |base64 -d > $fw_file
+    fwctl_url="https://raw.githubusercontent.com/learnhard-cn/vps_config/main/firewall/fwctl"
+    curl -o $fw_file -L $fwctl_url
     chmod +x $fw_file
+    $fw_file help
 }
 
 update_src() {
